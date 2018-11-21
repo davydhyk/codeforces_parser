@@ -1,15 +1,22 @@
-const cheerio = require('cheerio');
-const http = require('http');
-const fs = require('fs');
-const rimraf = require('rimraf');
+const cheerio = require('cheerio'),
+      http = require('http'),
+      https = require('https'),
+      fs = require('fs'),
+      rimraf = require('rimraf'),
+      Entities = require('html-entities').XmlEntities,
+      entities = new Entities(),
+      pretty = require('pretty');
 
 const pathToProblems = './problems',
       startFolderName = 'A',
       pathToTests = '/tests',
-      pathToLinks = './links.txt';
+      pathToLinks = './links.txt',
+      statementLinkSelector = '#pageContent > div.datatable > div:nth-child(6) > table > tbody > tr:nth-child(2) > td:nth-child(3) > a',
+      statementSelector = '#pageContent > div.problemindexholder > div > div',
+      statementFileName = '/statement.html';
 
 const format = {
-  task: '.tsk',
+  task: '.dat',
   answer: '.ans'
 }
 
@@ -23,11 +30,17 @@ if (!fs.existsSync(pathToLinks)) {
   return 0;
 }
 
-var links = fs.readFileSync(pathToLinks, 'utf8').split('\r\n');
+var links = [];
+fs.readFile(pathToLinks, 'utf8', (err, data) => {
+  links = data.split('\r\n');
+  start();
+});
 
 function getTests(link) {
+  if (link.indexOf('https') != -1) var query = https;
+  else var query = http;
   return new Promise((resolve, reject) => {
-    http.get(link, function (resp) {
+    query.get(link, function (resp) {
       var tsk = [],
           ans = [],
           data = "";
@@ -42,7 +55,25 @@ function getTests(link) {
             ans.push(output);
           }
         });
-        resolve({task: tsk, answer: ans});
+        resolve({task: tsk, answer: ans, link: $(statementLinkSelector).attr('href')});
+      });
+      resp.on('error', function (err) {
+        reject(err);
+      })
+    });
+  });
+}
+
+function getStatement(link) {
+  if (link.indexOf('https') != -1) var query = https;
+  else var query = http;
+  return new Promise((resolve, reject) => {
+    query.get(link, function (resp) {
+      var data = "";
+      resp.on('data', function (d) {data += d;});
+      resp.on('end', function () {
+        var $ = cheerio.load(data);
+        resolve(pretty(entities.decode($(statementSelector).html())));
       });
       resp.on('error', function (err) {
         reject(err);
@@ -68,19 +99,21 @@ console.log(links.length);
 async function start() {
   for(var _i = 0;_i<links.length;_i++) {
     console.log(String.fromCharCode(startFolderName.charCodeAt(0) + _i));
-    var result = await getTests(links[_i]);
-
-    var tsk = result.task,
-        ans = result.answer,
-        name = '/' + String.fromCharCode(startFolderName.charCodeAt(0) + _i),
-        tmpPath = pathToProblems + name;
-    console.log(tmpPath);
-    fs.mkdirSync(tmpPath);
-    tmpPath += pathToTests;
-    console.log(tmpPath);
-    fs.mkdirSync(tmpPath);
-    await saveTests(tmpPath, tsk, ans);
+    try {
+      var result = await getTests(links[_i]);
+      var statementLink = links[_i].split('/problemset')[0] + result.link + '?lang=ru';
+      var tsk = result.task,
+          ans = result.answer,
+          name = '/' + String.fromCharCode(startFolderName.charCodeAt(0) + _i),
+          tmpPath = pathToProblems + name;
+      fs.mkdirSync(tmpPath);
+      fs.writeFileSync(tmpPath + statementFileName, await getStatement(statementLink));
+      tmpPath += pathToTests;
+      console.log(tmpPath);
+      fs.mkdirSync(tmpPath);
+      await saveTests(tmpPath, tsk, ans);
+    } catch (err) {
+      console.log(err);
+    }
   }
 }
-
-start();

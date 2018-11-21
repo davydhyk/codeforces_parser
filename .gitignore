@@ -1,2 +1,4 @@
 /node_modules
 /.vscode
+/problems
+package-lock.json
